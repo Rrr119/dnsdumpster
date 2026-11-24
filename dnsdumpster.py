@@ -20,6 +20,7 @@ import os
 import argparse
 import time
 import hashlib
+import inspect
 import random
 import multiprocessing
 import threading
@@ -47,6 +48,20 @@ from geolocator.mxfinder import (query_host_mx, query_host_ns, query_host_txt
 from geolocator.utils import get_server_type
 import searchparser
 import searchutils
+from dnssec import (
+    DNSSEC_DIG_TEST_DOMAINS,
+    check_dnssec,
+    compare_dnssec_domains_with_dig,
+    compare_dnssec_with_dig,
+    dig_dnssec_status,
+    validate_dnssec_chain,
+)
+from history import (
+    DNSHistoryStore,
+    query_dns_history,
+    query_historical_dns,
+    record_dns_history,
+)
 
 def subdomain_sorting_key(hostname):
     """Sorting key for subdomains
@@ -717,8 +732,124 @@ def clean_domains(domain):
         if(match):
             domain_list.append(match.string)
     return domain_list
-    
-def main(domain):
+
+
+def _call_compatible(function, *args, **kwargs):
+    """Call *function* while only forwarding keyword arguments it accepts."""
+
+    try:
+        signature = inspect.signature(function)
+    except (TypeError, ValueError):
+        return function(*args, **kwargs)
+    parameters = signature.parameters
+    if any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    ):
+        return function(*args, **kwargs)
+    filtered = {
+        key: value for key, value in kwargs.items() if key in parameters
+    }
+    return function(*args, **filtered)
+
+
+def build_dns_report(
+    domain,
+    subdomains,
+    *,
+    include_dnssec=True,
+    include_history=True,
+    history_db=None,
+    dnssec_checker=None,
+    history_query=None,
+    history_recorder=None,
+    dnssec_timeout=8.0,
+    history_timeout=8.0,
+):
+    """Build the DNSDumpster report for an already-enumerated domain.
+
+    The original report keys are kept unchanged.  DNSSEC and history results
+    are additive keys, so existing consumers can continue reading the report
+    without modification.
+    """
+
+    subdomain_list = []
+    dnsrecords = dict()
+
+    for sub in subdomains:
+        a_record = query_A_records(sub)
+        if(a_record):
+            A = a_record[0]
+            d = {
+                "subdomain":sub,
+                "subdomain_ip":A.address,
+                "asn":locate_asn_info(A.address),
+                "server":get_server_type(sub),
+            }
+            subdomain_list.append(d)
+        else:
+            d = {
+                "subdomain":sub,
+                "subdomain_ip":"",
+                "server":get_server_type(sub),
+            }
+            subdomain_list.append(d)
+
+    dnsrecords["host"]=domain
+    dnsrecords["server"]=get_server_type(domain)
+    dnsrecords["mx"]=query_host_mx(domain)
+    dnsrecords["ns"]=query_host_ns(domain)
+    dnsrecords["asn"]=locate_asn_info(domain)
+    dnsrecords["subdomains"]=subdomain_list
+    dnsrecords["txt"]=query_host_txt(domain)
+
+    if include_dnssec:
+        try:
+            checker = dnssec_checker or check_dnssec
+            dnsrecords["dnssec"] = _call_compatible(
+                checker, domain, timeout=dnssec_timeout
+            )
+        except Exception as exc:
+            dnsrecords["dnssec"] = {
+                "domain": domain,
+                "status": "unknown",
+                "validated": False,
+                "errors": [str(exc)],
+            }
+
+    if include_history:
+        try:
+            recorder = history_recorder or record_dns_history
+            _call_compatible(recorder, domain, dnsrecords, db_path=history_db)
+        except Exception:
+            # A read-only home directory should not invalidate the report.
+            pass
+        try:
+            history_lookup = history_query or query_dns_history
+            dnsrecords["history"] = _call_compatible(
+                history_lookup, domain, db_path=history_db, timeout=history_timeout
+            )
+        except Exception as exc:
+            dnsrecords["history"] = {
+                "domain": domain,
+                "status": "error",
+                "records": {},
+                "count": 0,
+                "errors": [str(exc)],
+            }
+
+    return dnsrecords
+
+
+def main(
+    domain,
+    *,
+    include_dnssec=True,
+    include_history=True,
+    history_db=None,
+    dnssec_timeout=8.0,
+    history_timeout=8.0,
+):
     bruteforce_list = set()
     search_list = set()
 
@@ -759,42 +890,54 @@ def main(domain):
     if subdomains:
         subdomains = clean_domains(sorted(subdomains, key=subdomain_sorting_key))
     
-    # Dict data
-    subdomain_list = []
-    dnsrecords = dict()
-    
-    for sub in subdomains:
-        a_record = query_A_records(sub)
-        if(a_record):
-            A = a_record[0]
-            d = {
-                "subdomain":sub,
-                "subdomain_ip":A.address,
-                "asn":locate_asn_info(A.address),
-                "server":get_server_type(sub),
-            }
-            subdomain_list.append(d)
-        else:
-            d = {
-                "subdomain":sub,
-                "subdomain_ip":"",
-                "server":get_server_type(sub),
-            }
-            subdomain_list.append(d)
-    
-    dnsrecords["host"]=domain
-    dnsrecords["server"]=get_server_type(domain)
-    dnsrecords["mx"]=query_host_mx(domain)
-    dnsrecords["ns"]=query_host_ns(domain)
-    dnsrecords["asn"]=locate_asn_info(domain)
-    dnsrecords["subdomains"]=subdomain_list
-    dnsrecords["txt"]=query_host_txt(domain)
-    return dnsrecords
+    return build_dns_report(
+        domain,
+        subdomains,
+        include_dnssec=include_dnssec,
+        include_history=include_history,
+        history_db=history_db,
+        dnssec_timeout=dnssec_timeout,
+        history_timeout=history_timeout,
+    )
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser(prog="Module to dump all dns records of a given domain")
     parser.add_argument('-d', '--d', help='Help', required=True)
+    parser.add_argument(
+        '--no-dnssec',
+        action='store_true',
+        help='Skip DNSSEC chain validation',
+    )
+    parser.add_argument(
+        '--no-history',
+        action='store_true',
+        help='Skip historical DNS record lookup and snapshot recording',
+    )
+    parser.add_argument(
+        '--history-db',
+        default=None,
+        help='Path to the local DNS history SQLite database',
+    )
+    parser.add_argument(
+        '--dnssec-timeout',
+        type=float,
+        default=8.0,
+        help='DNSSEC lookup timeout in seconds (default: 8)',
+    )
+    parser.add_argument(
+        '--history-timeout',
+        type=float,
+        default=8.0,
+        help='Passive DNS history timeout in seconds (default: 8)',
+    )
     args = parser.parse_args()
     
-    subs = main(args.d)
+    subs = main(
+        args.d,
+        include_dnssec=not args.no_dnssec,
+        include_history=not args.no_history,
+        history_db=args.history_db,
+        dnssec_timeout=args.dnssec_timeout,
+        history_timeout=args.history_timeout,
+    )
     print(json.dumps(subs, indent=4, sort_keys=True))

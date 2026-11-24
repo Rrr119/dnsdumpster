@@ -354,5 +354,92 @@ def get_server_type(host):
         return ""
 ```
 
+# DNSSEC chain validation
+
+Every report now includes a `dnssec` object. The validator walks the delegation
+chain from the IANA root trust anchors through each zone cut, validating DS and
+DNSKEY RRsets before checking a target A/AAAA/CNAME RRset. The result uses the
+standard `secure`, `insecure`, `bogus` and `unknown` states.
+
+```json
+{
+    "dnssec": {
+        "domain": "cloudflare.com",
+        "status": "secure",
+        "validated": true,
+        "trust_anchor": "IANA root KSK",
+        "chain": [
+            {"zone": ".", "status": "secure", "key_tag": 20326},
+            {"zone": "com.", "status": "secure", "key_tag": 19718},
+            {"zone": "cloudflare.com.", "status": "secure", "key_tag": 2371}
+        ],
+        "errors": []
+    }
+}
+```
+
+DNSSEC records are fetched over DNS-over-HTTPS so the tool can see RRSIGs even
+when the local stub resolver strips them. The endpoint defaults to Cloudflare's
+DoH service and falls back to Google and Quad9. Override it with:
+
+```sh
+export DNSDUMPSTER_DOH_URL=https://dns.google/dns-query
+```
+
+The `--no-dnssec` flag skips validation. `dnssec.py` also exposes
+`check_dnssec()`/`validate_dnssec_chain()`, `dig_dnssec_status()` and
+`compare_dnssec_with_dig()` for direct use.
+
+# Historical DNS records
+
+Each run records a snapshot in a local SQLite database and adds a `history`
+object to the report. Historical snapshots show when each A/AAAA/CNAME/MX/NS/
+SOA/TXT value was first and last observed, including addresses that are no
+longer present.
+
+```json
+{
+    "history": {
+        "domain": "example.com",
+        "record_types": ["A", "MX", "NS", "TXT"],
+        "records": {
+            "A": [
+                {
+                    "name": "www.example.com",
+                    "value": "192.0.2.10",
+                    "first_seen": "2026-01-01T00:00:00+00:00",
+                    "last_seen": "2026-02-01T00:00:00+00:00",
+                    "observations": 2,
+                    "source": "local"
+                }
+            ]
+        },
+        "count": 1,
+        "providers": []
+    }
+}
+```
+
+The default database is `~/.dnsdumpster/history.sqlite3`. Set
+`DNSDUMPSTER_HISTORY_DB` or pass `--history-db PATH` to change it. To merge
+passive-DNS history from SecurityTrails, set `SECURITYTRAILS_API_KEY`; without a
+key the provider is reported as `unconfigured` and the local history still
+works. `--no-history` disables both snapshot recording and history lookup.
+
+The original report keys (`host`, `server`, `mx`, `ns`, `asn`, `subdomains`,
+`txt`) are unchanged; `dnssec` and `history` are additive fields.
+
+# Tests
+
+```sh
+python3 -m pytest -q
+```
+
+The suite includes synthetic DNSSEC chains for `secure`, `insecure`, `bogus`
+and `unknown` outcomes, local history and passive-DNS parsing tests, and a
+report-compatibility test. `tests/test_dnssec.py` also compares ten public
+domains against `dig +dnssec`; those cases skip automatically when public DNS
+or `dig` is unavailable.
+
 ## Stargazers over time
 [![Stargazers over time](https://starchart.cc/nmmapper/dnsdumpster.svg?variant=adaptive)](https://starchart.cc/nmmapper/dnsdumpster)

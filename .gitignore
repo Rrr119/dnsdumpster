@@ -46,6 +46,9 @@ coverage.xml
 *.cover
 .hypothesis/
 .pytest_cache/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
 
 # Translations
 *.mo

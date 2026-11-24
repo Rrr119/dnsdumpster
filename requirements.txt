@@ -1,7 +1,8 @@
 requests
 dnspython
+cryptography>=50
 simplejson
-ip2geotools
+ip2geotools; python_version < "3.14"
 ipwhois
 wafw00f
 graphviz

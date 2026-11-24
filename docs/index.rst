@@ -50,9 +50,26 @@ The following are the kind of information that dnsdumpster will be able to dump 
 * Web application firewall(WAF)
 * Geo locate physical location of IP
 * ASN Detection
+* DNSSEC chain validation (secure / insecure / bogus / unknown)
+* Historical DNS records from local snapshots and optional passive DNS
 
 
 We are doing what ever we can to dump more information.
+
+DNSSEC and history
+==================
+Reports keep the existing ``host``, ``server``, ``mx``, ``ns``, ``asn``,
+``subdomains`` and ``txt`` keys and add ``dnssec`` and ``history`` objects.
+DNSSEC validation walks from the IANA root trust anchors through every DS /
+DNSKEY zone cut and validates a target RRset. Historical records are stored in
+``~/.dnsdumpster/history.sqlite3`` (configurable with
+``DNSDUMPSTER_HISTORY_DB``); set ``SECURITYTRAILS_API_KEY`` to merge passive DNS
+history. Use ``--no-dnssec`` or ``--no-history`` to skip either feature.
+
+Run the test suite, including the ten-domain ``dig +dnssec`` consistency check,
+with::
+
+    python3 -m pytest -q
 
 Dumping subdomains
 ==================

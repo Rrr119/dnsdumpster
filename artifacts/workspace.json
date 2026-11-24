@@ -1,0 +1,17 @@
+{
+  "root": "/home/dev/feedback/uid36801",
+  "B": "/home/dev/feedback/uid36801",
+  "sha": "da83ac3ea16742c0b3bee6b14464c90a31d1aff2",
+  "wslDistro": "Ubuntu-26.04",
+  "source": {
+    "owner": "nmmapper",
+    "repo": "dnsdumpster",
+    "sha": "da83ac3ea16742c0b3bee6b14464c90a31d1aff2"
+  },
+  "fork": {
+    "owner": "Rrr119",
+    "repo": "dnsdumpster",
+    "cloneUrl": "https://github.com/Rrr119/dnsdumpster.git"
+  },
+  "at": "2026-11-24T20:14:07.691Z"
+}

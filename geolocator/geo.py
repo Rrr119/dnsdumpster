@@ -18,10 +18,6 @@
 #  MA 02110-1301, USA.
 #  
 #  
-from ip2geotools.databases.noncommercial import DbIpCity
-from ipwhois.net import Net
-from ipwhois.asn import IPASN
-from ipwhois.asn import ASNOrigin
 from dns import resolver
 from dns.resolver import NXDOMAIN
 try:
@@ -50,6 +46,8 @@ def geo_locate_ip(ip):
     @IP: 147.229.2.90
     """
     try:
+        from ip2geotools.databases.noncommercial import DbIpCity
+
         response = DbIpCity.get(ip, api_key='free')
     except Exception:
         return None
@@ -61,6 +59,9 @@ def locate_asn_info(ip):
     @IP: 147.229.2.90
     """
     try:
+        from ipwhois.net import Net
+        from ipwhois.asn import IPASN
+
         net = Net(ip)
         ipasn = IPASN(net)
         results = ipasn.lookup()
